@@ -636,7 +636,20 @@
 <canvas id="confettiCanvas"></canvas>
 <div id="celebrateMsg"></div>
 
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script>
+firebase.initializeApp({
+  apiKey: "AIzaSyAvFkJ4-Vu1c9nYooOwARYlLX1nMFePEB8",
+  authDomain: "saiten-tool.firebaseapp.com",
+  projectId: "saiten-tool",
+  storageBucket: "saiten-tool.firebasestorage.app",
+  messagingSenderId: "255406288187",
+  appId: "1:255406288187:web:cd4fae45815531e0ad1b1e"
+});
+const db = firebase.firestore();
+const COL = "clinicInfoTool";
+
 const DOW = ["mon","tue","wed","thu","fri","sat","sun","hol"];
 const DOW_LABEL = {mon:"月",tue:"火",wed:"水",thu:"木",fri:"金",sat:"土",sun:"日",hol:"祝"};
 
@@ -696,27 +709,40 @@ function buildDummyData() {
   return arr;
 }
 
-const STORAGE_KEY = "clinicInfoToolDraft_v9";
+let clinics = [];
+let firestoreReady = false;
 
-function loadState() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    try { return JSON.parse(raw); } catch (e) {}
+function saveClinic(c) {
+  return db.collection(COL).doc(c.cid).set(c);
+}
+
+async function seedDummyDataIfEmpty() {
+  const snapshot = await db.collection(COL).limit(1).get();
+  if (snapshot.empty) {
+    const batch = db.batch();
+    buildDummyData().forEach(c => batch.set(db.collection(COL).doc(c.cid), c));
+    await batch.commit();
   }
-  const fresh = buildDummyData();
-  saveState(fresh);
-  return fresh;
-}
-function saveState(data) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
 }
 
-let clinics = loadState();
+db.collection(COL).onSnapshot(async snapshot => {
+  if (!firestoreReady && snapshot.empty) {
+    await seedDummyDataIfEmpty();
+    return; // the seed write triggers this listener again with real data
+  }
+  clinics = snapshot.docs.map(d => d.data());
+  firestoreReady = true;
+  if (document.getElementById("listView").style.display !== "none") renderList();
+}, err => {
+  console.error(err);
+  document.getElementById("listBody").innerHTML = `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--danger)">データの読み込みに失敗しました。通信環境をご確認の上、再読み込みしてください。</td></tr>`;
+});
 let currentFilter = "all";
 let currentSearch = "";
 let currentTodoOnly = true;
 let currentDraftOnly = false;
 let editingCid = null;
+let editingClinic = null;
 
 const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
 const MY_NAME_KEY = "clinicInfoToolMyName";
@@ -751,25 +777,19 @@ function tryOpenEdit(cid) {
   setMyName(name);
   c.lockBy = name;
   c.lockAt = Date.now();
-  saveState(clinics);
+  saveClinic(c);
   openEdit(cid);
 }
 
 function releaseLock() {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   if (c && c.lockBy) {
     c.lockBy = "";
     c.lockAt = null;
-    saveState(clinics);
+    saveClinic(c);
   }
 }
 
-window.addEventListener("storage", e => {
-  if (e.key === STORAGE_KEY) {
-    clinics = loadState();
-    if (document.getElementById("listView").style.display !== "none") renderList();
-  }
-});
 setInterval(() => {
   if (document.getElementById("listView").style.display !== "none") renderList();
 }, 30000);
@@ -1047,19 +1067,19 @@ function renderHours(hours) {
 }
 
 document.getElementById("copyMonToWeekday").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   const monData = JSON.parse(JSON.stringify(c.hours.mon));
   ["tue","wed","thu","fri"].forEach(d => { c.hours[d] = JSON.parse(JSON.stringify(monData)); });
   renderHours(c.hours);
 });
 document.getElementById("copySatToSunHol").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   const satData = JSON.parse(JSON.stringify(c.hours.sat));
   ["sun","hol"].forEach(d => { c.hours[d] = JSON.parse(JSON.stringify(satData)); });
   renderHours(c.hours);
 });
 document.getElementById("copyMonToAll").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   const monData = JSON.parse(JSON.stringify(c.hours.mon));
   DOW.forEach(d => { if (d !== "mon") c.hours[d] = JSON.parse(JSON.stringify(monData)); });
   renderHours(c.hours);
@@ -1069,6 +1089,7 @@ function openEdit(cid) {
   const c = clinics.find(x => x.cid === cid);
   if (!c) return;
   editingCid = cid;
+  editingClinic = c;
 
   document.getElementById("ro_cid").textContent = c.cid;
   document.getElementById("ro_name").textContent = c.name;
@@ -1203,7 +1224,7 @@ function renderStations(c) {
 }
 
 document.getElementById("addStationBtn").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   c.stations.push({ name: "", kana: "", mode: "", minutes: "" });
   renderStations(c);
 });
@@ -1357,7 +1378,7 @@ function parseDelimitedText(text, delimiter) {
   return rows;
 }
 
-function importFromSheet(tsvText) {
+async function importFromSheet(tsvText) {
   const rows = parseDelimitedText(tsvText, "\t").filter(r => r.some(cell => cell.trim() !== ""));
   if (rows.length < 2) {
     alert("データが読み取れませんでした。見出し行＋データ行を貼り付けてください。");
@@ -1394,30 +1415,55 @@ function importFromSheet(tsvText) {
   }
 
   const existingByCid = new Map(clinics.map(c => [c.cid, c]));
-  const removed = clinics.filter(c => !incoming.has(c.cid)).length;
+  const removedCids = clinics.filter(c => !incoming.has(c.cid)).map(c => c.cid);
   let added = 0, updated = 0;
-  const newClinics = [];
+  const toWrite = [];
   incoming.forEach((info, cid) => {
     const existing = existingByCid.get(cid);
     if (existing) {
-      existing.name = info.name;
-      existing.address = info.address;
-      existing.tel = info.tel;
-      existing.rank = info.rank;
-      newClinics.push(existing);
+      toWrite.push({ ...existing, name: info.name, address: info.address, tel: info.tel, rank: info.rank });
       updated++;
     } else {
-      newClinics.push(blankClinicEntry(info.cid, info.name, info.address, info.tel, info.rank));
+      toWrite.push(blankClinicEntry(info.cid, info.name, info.address, info.tel, info.rank));
       added++;
     }
   });
 
-  clinics = newClinics;
-  saveState(clinics);
+  const runBtn = document.getElementById("importRunBtn");
+  runBtn.disabled = true;
+  runBtn.textContent = `登録中…（${toWrite.length + removedCids.length}件を処理中、しばらくお待ちください）`;
+  try {
+    await commitImportBatches(toWrite, removedCids);
+  } catch (e) {
+    console.error(e);
+    alert("登録中にエラーが発生しました。通信環境をご確認の上、もう一度お試しください。");
+    runBtn.disabled = false;
+    runBtn.textContent = "登録";
+    return;
+  }
+  runBtn.disabled = false;
+  runBtn.textContent = "登録";
+
   document.getElementById("importModalOverlay").style.display = "none";
   document.getElementById("importTextarea").value = "";
-  renderList();
-  alert(`院データを更新しました。\n追加: ${added}件 / 更新: ${updated}件 / 削除: ${removed}件`);
+  alert(`院データを更新しました。\n追加: ${added}件 / 更新: ${updated}件 / 削除: ${removedCids.length}件`);
+}
+
+async function commitImportBatches(toWrite, removedCids) {
+  const ops = [];
+  toWrite.forEach(c => ops.push({ type: "set", cid: c.cid, data: c }));
+  removedCids.forEach(cid => ops.push({ type: "delete", cid }));
+
+  const CHUNK = 450;
+  for (let i = 0; i < ops.length; i += CHUNK) {
+    const batch = db.batch();
+    ops.slice(i, i + CHUNK).forEach(op => {
+      const ref = db.collection(COL).doc(op.cid);
+      if (op.type === "set") batch.set(ref, op.data);
+      else batch.delete(ref);
+    });
+    await batch.commit();
+  }
 }
 
 document.getElementById("importToggleBtn").addEventListener("click", () => {
@@ -1518,7 +1564,7 @@ function stationsMissingMode(c) {
 }
 
 document.getElementById("draftSaveBtn").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   const nameKanaInput = document.getElementById("f_name_kana");
   const addrKanaInput = document.getElementById("f_address_kana");
   nameKanaInput.value = katakanaToHiragana(nameKanaInput.value);
@@ -1541,13 +1587,13 @@ document.getElementById("draftSaveBtn").addEventListener("click", () => {
   collectFormIntoClinic(c);
   c.completed = false;
   c.draft = true;
-  saveState(clinics);
+  saveClinic(c);
   alert("途中まで保存しました。「未入力のみ表示」の一覧に残るので、続きはまたこの院を開いて入力できます。");
   backToList();
 });
 
 document.getElementById("saveBtn").addEventListener("click", () => {
-  const c = clinics.find(x => x.cid === editingCid);
+  const c = editingClinic;
   const nameKanaInput = document.getElementById("f_name_kana");
   const addrKanaInput = document.getElementById("f_address_kana");
   nameKanaInput.value = katakanaToHiragana(nameKanaInput.value);
@@ -1590,7 +1636,7 @@ document.getElementById("saveBtn").addEventListener("click", () => {
   c.completed = true;
   c.draft = false;
 
-  saveState(clinics);
+  saveClinic(c);
   backToList();
   celebrate();
 });
