@@ -648,6 +648,7 @@ firebase.initializeApp({
   appId: "1:255406288187:web:cd4fae45815531e0ad1b1e"
 });
 const db = firebase.firestore();
+db.enablePersistence().catch(err => console.warn("Firestore persistence unavailable:", err.code));
 const COL = "clinicInfoTool";
 
 const DOW = ["mon","tue","wed","thu","fri","sat","sun","hol"];
@@ -791,7 +792,9 @@ function releaseLock() {
 }
 
 setInterval(() => {
-  if (document.getElementById("listView").style.display !== "none") renderList();
+  if (document.getElementById("listView").style.display !== "none" && clinics.some(isLockActive)) {
+    renderList();
+  }
 }, 30000);
 
 function rankIndex(rank) {
@@ -897,10 +900,8 @@ function renderList() {
   });
 
   const body = document.getElementById("listBody");
-  body.innerHTML = "";
-  list.forEach(c => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
+  body.innerHTML = list.map(c => `
+    <tr data-cid="${c.cid}">
       <td><span class="rank-badge ${rankClass(c.rank)}">${rankLabel(c.rank)}</span></td>
       <td>${c.cid}</td>
       <td>${c.name}</td>
@@ -914,11 +915,13 @@ function renderList() {
             ? `<span class="status-badge status-draft">🟡 入力中${c.updated_by ? "（"+c.updated_by+"）" : ""}</span>`
             : `<span class="status-badge status-todo">未入力</span>`}
       </td>
-    `;
-    tr.addEventListener("click", () => tryOpenEdit(c.cid));
-    body.appendChild(tr);
-  });
+    </tr>
+  `).join("");
 }
+document.getElementById("listBody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-cid]");
+  if (tr) tryOpenEdit(tr.dataset.cid);
+});
 
 document.querySelectorAll(".chip").forEach(chip => {
   chip.addEventListener("click", () => {
@@ -928,9 +931,14 @@ document.querySelectorAll(".chip").forEach(chip => {
     renderList();
   });
 });
+let searchDebounceTimer = null;
 document.getElementById("searchBox").addEventListener("input", e => {
-  currentSearch = e.target.value;
-  renderList();
+  const value = e.target.value;
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    currentSearch = value;
+    renderList();
+  }, 200);
 });
 document.getElementById("todoOnly").addEventListener("change", e => {
   currentTodoOnly = e.target.checked;
@@ -1294,21 +1302,21 @@ function formatClinicText(c) {
 
 function renderReviewList() {
   const tbody = document.getElementById("reviewListBody");
-  tbody.innerHTML = "";
-  clinics.filter(c => c.completed).forEach(c => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
+  tbody.innerHTML = clinics.filter(c => c.completed).map(c => `
+    <tr data-cid="${c.cid}">
       <td><span class="rank-badge ${rankClass(c.rank)}">${rankLabel(c.rank)}</span></td>
       <td>${c.cid}</td>
       <td>${c.name}</td>
       <td>${c.address}</td>
       <td>${c.updated_by || ""}</td>
       <td>${c.updated_at || ""}</td>
-    `;
-    tr.addEventListener("click", () => openReviewDetail(c.cid));
-    tbody.appendChild(tr);
-  });
+    </tr>
+  `).join("");
 }
+document.getElementById("reviewListBody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-cid]");
+  if (tr) openReviewDetail(tr.dataset.cid);
+});
 
 let reviewingCid = null;
 function openReviewDetail(cid) {
