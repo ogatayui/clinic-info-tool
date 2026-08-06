@@ -880,7 +880,8 @@ function renderSummary() {
   const todoList = clinics.filter(c => !c.completed);
   const done = doneList.length;
   const todo = todoList.length;
-  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  const pct = total > 0 ? (done / total) * 100 : 0;
+  const pctLabel = pct.toFixed(1);
   const prefIndex = Math.min(JAPAN_ROUTE_PREFS.length - 1, Math.floor((pct / 100) * JAPAN_ROUTE_PREFS.length));
   const currentPref = JAPAN_ROUTE_PREFS[prefIndex];
   const remainingKm = Math.round(JAPAN_ROUTE_TOTAL_KM * (1 - pct / 100));
@@ -894,7 +895,7 @@ function renderSummary() {
       <div class="num" style="color:var(--green)">${done}</div><div class="label">入力済み</div>
       <div class="tip"><div class="tip-title">入力済みの内訳</div>${rankBreakdownHtml(doneList)}</div>
     </div>
-    <div class="box"><div class="num">${pct}%</div><div class="label">入力済み率</div></div>
+    <div class="box"><div class="num">${pctLabel}%</div><div class="label">入力済み率</div></div>
     <div class="box car-box">
       <div class="car-track">
         <div class="car-line">
